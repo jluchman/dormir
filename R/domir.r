@@ -288,9 +288,9 @@
 #'   lm_r2,
 #'   data = mtcars,
 #'   .set =
-#'     list( 
+#'     list(
 #'       trns = ~ am + gear,
-#'       eng = ~ cyl + vs, 
+#'       eng = ~ cyl + vs,
 #'       misc = ~ qsec + drat
 #'     )
 #' )
@@ -324,6 +324,9 @@
 #'   )
 #' }
 #'
+# review below for integration with .wst ----
+# use this go to simplify functions here? ----
+# domin is getting complex ----
 domir <- function(.obj, ...) {
   UseMethod("domir")
 }
@@ -344,7 +347,7 @@ domir.formula <- function(
   if (length(fml_parsed$rhs_names) == 0)
     stop("The formula in '.obj' must have one or more terms.", call. = FALSE)
   # create logical vector to assist removing names;
-  # used to eliminate names used in '.all' and '.set' from the
+  # used to eliminate names used in '.all', '.set', and '.wst' from the
   # overall list; initialized as 'don't remove'/FALSE
   rmv_frm_subst <- rep(FALSE, times = length(fml_parsed$rhs_names))
   # confirm .fct works as applied to .obj;
@@ -368,28 +371,43 @@ domir.formula <- function(
   rmv_frm_subst[pos_all_name] <- TRUE
   # process '.set' ----
   # indicate that names in '.set' are to be removed in name removal list
-  selector_locations_sets <- proc_set_fml(fml_parsed, .set, "formula", NULL)
+  selector_locations_sets <- 
+    proc_set_fml(fml_parsed, .set, "formula", NULL, ".set")
   rmv_frm_subst[unlist(selector_locations_sets)] <- TRUE
   # apply labels to '.set'
   set_labels <- set_labeller(.set, fml_parsed$rhs_names)
+  # process '.wst' ----
+  # indicate that names in '.wst' are to be removed in name removal list
+  selector_locations_wsts <- 
+    proc_set_fml(fml_parsed, .wst, "formula", NULL, ".wst")
+  rmv_frm_subst[unlist(selector_locations_wsts)] <- TRUE
   # subset adjustment and check ----
   # use name removal list to pare down selector_location list;
-  # add '.set's as selector locations
-  if (!is.null(selector_locations_sets) || !is.null(all_model)) {
+  # add '.set's and '.wst's as selector locations
+  if (!is.null(selector_locations_sets) || !is.null(all_model) || 
+      !is.null(selector_locations_wsts)) {
     selector_locations <- selector_locations[!rmv_frm_subst]
     selector_locations <- append(selector_locations, selector_locations_sets)
+    selector_locations <- append(selector_locations, selector_locations_wsts)
   }
+  # flag locations of .'wst's within selector_location list
+  which_wsts <- 
+    ifelse(
+      is.null(selector_locations_wsts), 
+      0, 
+      (length(selector_locations)-length(selector_locations_wsts)+1):
+        length(selector_locations)
+    )
   # check number of subsets
-  if (length(selector_locations) < 2)
-    stop("At least two names or sets of names are needed ",
+  if ((length(selector_locations) < 2) &&
+      ifelse(is.null(selector_locations_wsts), 
+             TRUE, sum(sapply(selector_locations_wsts, length)) < 2))
+    stop("At least two names, within-set names, or sets of names are needed ",
          "for a dominance analysis.",
          call. = FALSE)
   # define formula-based meta-function to coordinate .fct calls ----
   meta_domir_fml <-
-    function(Selector_lgl,
-             fml_parsed, .fct,
-             RHS,
-             args_2_fct, ...) {
+    function(Selector_lgl, fml_parsed, .fct, RHS, args_2_fct, ...) {
       # indicate which names have been selected for inclusion
       # by 'Selector_lgl' implemented/passed by `dominance_scalar()`
       for (elem in RHS[Selector_lgl]) {
@@ -407,19 +425,18 @@ domir.formula <- function(
       do.call(.fct, append(list(fml), args_2_fct))
     }
   # define arguments to `dominance_scalar` ----
+  # TODO: restructure 'args_list' into directly submitted args to 'dominance _scalar()' ----
   args_list <-
     list(RHS = selector_locations,
          fml_parsed = fml_parsed,
          .fct = .fct,
          .all = all_model, .adj = adj_model,
+         .wst = which_wsts,
          args_2_fct = list(...))
   # implement dominance analysis
   return_list <-
-    dominance_scalar(
-      meta_domir_fml,
-      args_list, full_model,
-      .cdl, .cpt, .rev,
-      .cst, .prg)
+    dominance_scalar(meta_domir_fml, args_list, full_model, 
+                     .cdl, .cpt, .rev, .cst, .prg)
   # finalize returned values and attributes ----
   if (is.null(.set)) {
     IV_Labels <- fml_parsed$rhs_names[!rmv_frm_subst]
@@ -608,6 +625,7 @@ domir.formula_list <- function(
       do.call(.fct, append(list(fml_lst), args_2_fct))
     }
   # define arguments to `dominance_scalar` ----
+  # TODO: restructure 'args_list' into directly submitted args to 'dominance _scalar()' ----
   args_list <-
     list(RHS = selector_locations,
          list_parsed = list_parsed,
@@ -905,41 +923,47 @@ est_all_model <-
     function_checker(all_fml, .fct, ...)
   }
 # process sets ----
-proc_set_fml <- function(fml_prs, .set, .sty, lhs_rhs) {
+proc_set_fml <- function(fml_prs, .set, .sty, lhs_rhs, .stp) {
   if (is.null(.set)) return(NULL)
   # check '.set' is a list
   if (!is.list(.set)) 
-    stop("'.set' must be a list.", call. = FALSE)
+    stop("'", .stp, "' must be a list.", call. = FALSE)
   # check '.set' is not an empty list
   if (length(.set) == 0) 
-    stop("'.set' is empty.", call. = FALSE)
+    stop("'", .stp, "' is empty.", call. = FALSE)
+  # valid formulas in '.set' check
+  not_fmls <-
+    switch(
+      .sty,
+      formula = sapply(.set, function(elem) {!inherits(elem, "formula")}),
+      formula_list = 
+        sapply(
+          .set, 
+          function(elem) {
+            !inherits(elem, "formula_list") || (length(elem) == 0) 
+          }
+        )
+    )
+  if (any(not_fmls)) {
+    which_not_fml <- seq_len(length(not_fmls))[not_fmls]
+    stop("List element(s) ",paste(which_not_fml, collapse = " "), " of '",
+         .stp, "' are not valid '", .sty, "'s.",
+         call. = FALSE)
+  }
   # obtain RHS, LHS, intercept, and offsets from '.set's
   sets_prs <-
     switch(
       .sty,
       formula = lapply(.set, formula_parse),
-      formula_list = 
-        lapply(
-          .set, 
-          function(elem) {
-            # enforce each element being 'formula_list'
-            if (!inherits(elem, "formula_list")) 
-              stop("Each element in '.set' must be a 'formula_list'.", 
-                   call. = FALSE)
-            # avoids cryptic error
-            if (length(elem) == 0) 
-              stop("Each element in '.set' must be non-empty.", call. = FALSE)
-            lapply(elem, formula_parse)
-          }
-        )
+      formula_list = lapply(.set, function(elem) {lapply(elem, formula_parse)})
     )
-  # '.set' must be list
+  # > 0 terms in '.set' check
   chk_set_fml <- function(sets_prs, fml_prs) { # consider unifying checks for '.all' and '.set' formulas
     rhs_counts_sets <-
       sapply(sets_prs, function(elem) length(elem$rhs_names) == 0)
     if (any(rhs_counts_sets)) {
       which_int_only <- seq_len(length(rhs_counts_sets))[rhs_counts_sets]
-      stop("Formulas in '.set' must have one or more terms. ",
+      stop("Formulas in '", .stp, "' must have one or more terms. ",
            "Formula(s) in list element(s) ",
            paste(which_int_only, collapse = " "),
            " have no terms.",
@@ -949,7 +973,7 @@ proc_set_fml <- function(fml_prs, .set, .sty, lhs_rhs) {
     set_lhs <- sapply(sets_prs, function(elem) length(elem$lhs_names) == 0)
     if (!all(set_lhs) && .sty == "formula") {
       which_have_lhs <- seq_len(length(set_lhs))[!set_lhs]
-      stop("Left hand sides not allowed in '.set'. ",
+      stop("Left hand sides not allowed in '", .stp, "'. ",
            "Formula(s) in list element(s) ",
            paste(which_have_lhs, collapse = " "),
            " have left hand sides.",
@@ -959,7 +983,7 @@ proc_set_fml <- function(fml_prs, .set, .sty, lhs_rhs) {
     set_offset <- sapply(sets_prs, function(elem) is.null(elem$offset))
     if (!all(set_offset)) {
       which_have_offset <- seq_len(length(set_offset))[!set_offset]
-      stop("Offsets not allowed in '.set'. ",
+      stop("Offsets not allowed in '", .stp, "'. ",
            "Formula(s) in list element(s) ",
            paste(which_have_offset, collapse = " "),
            " have offsets.",
@@ -969,7 +993,7 @@ proc_set_fml <- function(fml_prs, .set, .sty, lhs_rhs) {
     set_intercept <- sapply(sets_prs, function(elem) elem$intercept_lgl)
     if (!all(set_intercept)) {
       which_rmv_intercept <- seq_len(length(set_intercept))[!set_intercept]
-      stop("Removing intercepts not allowed in '.set'. ",
+      stop("Removing intercepts not allowed in '", .stp, "'. ",
            "Formula(s) in list element(s) ",
            paste(which_rmv_intercept, collapse = " "),
            " remove the intercept.",
@@ -981,7 +1005,8 @@ proc_set_fml <- function(fml_prs, .set, .sty, lhs_rhs) {
     formula = chk_set_fml(sets_prs),
     formula_list =
       ( function() {
-        if (!is.list(.set)) stop("'.set' must be a 'list'.", call. = FALSE)
+        if (!is.list(.set)) stop("'", .stp, "' must be a 'list'.", 
+                                 call. = FALSE)
         lapply(sets_prs, chk_set_fml)
       })()
   )
@@ -1031,7 +1056,7 @@ proc_set_fml <- function(fml_prs, .set, .sty, lhs_rhs) {
         paste(fmls, "contain", name)
       }
     dups_report <- sapply(dups, report_dups, USE.NAMES = FALSE)
-    stop("Names are duplicated across formulas in '.set'. ",
+    stop("Names are duplicated across formulas in '", .stp, "'. ",
          paste(dups_report, collapse = ", "), ".",
          call. = FALSE)
   }
@@ -1085,10 +1110,11 @@ proc_set_fml <- function(fml_prs, .set, .sty, lhs_rhs) {
         seq_len(length(sets_prs))[elem_rpt],
         function(elem) {
           bad_names <- set_names[[elem]][!which_valid_names[[elem]]]
-          paste(c(bad_names, "in '.set' element", elem), collapse = " ")
+          bad_names <- paste(bad_names, collapse =)
+          paste(c(bad_names, " in '", .sty, "' element ", elem), collapse = "")
         }
       )
-    stop("Names in '.set' are not present in '.obj.' ",
+    stop("Names in '", .stp, "' are not present in '.obj.' ",
          paste(valid_report, collapse = ", "), ".",
          call. = FALSE)
   }
@@ -1135,9 +1161,6 @@ set_labeller <- function(.set, rhs_names) {
 # check args to domir ----
 domir_args <-
   function(.wst, .rev, .cpt, .cdl, .prg, .cst) {
-    if (!is.null(.wst)) {
-      .NotYetUsed(".wst")
-    }
     lgl_args <- sapply(list(.rev, .cdl, .cpt, .prg), is.logical)
     if (!all(lgl_args))
       stop(
@@ -1155,6 +1178,8 @@ domir_args <-
         "Object in '.cst' not a cluster from package 'parallel'.",
         call. = FALSE
       )
+    if (!is.null(names(.wst))) 
+      stop("Named list elements not allowed with '.wst'.", call. = FALSE)
     NULL
   }
 #' @title Print method for `domir`

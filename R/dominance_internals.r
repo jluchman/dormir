@@ -8,6 +8,7 @@
 #' @name dominance_scalar
 #' @rdname dominance_scalar
 #' @export
+# TODO: restructure 'args_list' into directly submitted args to 'dominance _scalar()' ----
 dominance_scalar <-
   function(function2call, args_list,
            value_w_all_names,
