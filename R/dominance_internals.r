@@ -25,6 +25,136 @@ dominance_scalar <-
       expand.grid(in_out_namelist, KEEP.OUT.ATTRS = FALSE)
     subset_filter <- apply(subset_matrix, 1, any)
     subset_matrix <- subset_matrix[subset_filter, ]
+    # expand '.wst's ----
+    if (!is.null(args_list$.wst)) {
+      # obtain cols and 'selector_locations' of 'subset_matrix" 
+      # associated with '.wst'
+      wst_matrix <- as.matrix(subset_matrix[,args_list$.wst])
+      wst_locs <- args_list$RHS[args_list$.wst]
+      # list and locations of non-'.wst' names
+      nonwst_loc <- 1:(ncol(subset_matrix)-length(wst_locs))
+      if (nonwst_loc[length(nonwst_loc)] == 0) nonwst_loc <- 0 # when there are no other names, makes a reversed 1 0 vec
+      nonwst_names <- names(subset_matrix)[nonwst_loc]
+      # construct new names for '.wst' variables for `rbind`-ing
+      wst_names <- 
+        lapply(
+          1:length(wst_locs),
+          function(wst) {
+            paste("wst_", wst, "_", 1:length(wst_locs[[wst]]), sep = "")
+          }
+        )
+      # create all combinations of names within a '.wst' element as separate 
+      # lists. remove empty/all FALSE and full/all TRUE combinations within 
+      # each '.wst' element
+      in_out_namelist_wst <- 
+        lapply(
+          wst_locs,
+          function(elem) {
+            in_out_nmlst <- 
+              lapply(1:length(elem), function(name) c(FALSE, TRUE))
+            sub_mat <- 
+              expand.grid(in_out_nmlst, KEEP.OUT.ATTRS = FALSE)[-1,]
+          }
+        )
+      # create a data.frame that melds together the combinations created in 
+      # 'in_out_namelist_wst' with other within-set name sets. This involves 
+      # identifying whether there are other within-set name sets ('oth_wsts), 
+      # how many names are in each of those other within-set name sets 
+      # ('oth_wst_lens'), and the names in those other within-set name sets 
+      # ('oth_wst_names'). These three factors are then combined to expand 
+      # other '.wst' elements such, for each within-set name in each 
+      # '.wst' element, that they all fill in TRUE or FALSE for all names 
+      # corresponding with whether they are included or given 'wst_matrix'.
+      # The names and namesets are then joined with the within-set names and 
+      # bound together by row. Note that only TRUE entries in 'wst_matrix' 
+      # are expanded.
+      fmt_in_out_namelist_wst <- 
+        lapply(
+          1:ncol(wst_matrix),
+          function(col) {
+            wst_expanded_combs <-
+              lapply(
+                1:length(wst_matrix[,col]),
+                function(row) {
+                  if (wst_matrix[row, col] == TRUE) {
+                    oth_wsts <- wst_matrix[row,-col]
+                    oth_wst_lens <- sapply(wst_locs[-col], length)
+                    oth_wst_names <- wst_names[-col]
+                    if (length(oth_wsts) == 0) {
+                      oth_wst_combs <- NULL
+                    } else {
+                      oth_wst_combs <- 
+                        lapply(
+                          1:length(oth_wsts),
+                          function(elem) 
+                            matrix(
+                              rep(oth_wsts[elem], times = oth_wst_lens[elem]),
+                              ncol = oth_wst_lens[elem],
+                              dimnames = list(NULL, oth_wst_names[[elem]])
+                            )
+                        )
+                    }
+                    focal_wst <- in_out_namelist_wst[[col]]
+                    colnames(focal_wst) <- wst_names[[col]]
+                    if (is.null(oth_wst_combs)) {
+                      focal_wst_w_other_names <- 
+                        data.frame(subset_matrix[row, nonwst_loc], focal_wst)
+                    } else {
+                      focal_wst_w_other_names <- 
+                        data.frame(
+                          subset_matrix[row, nonwst_loc], 
+                          focal_wst, 
+                          oth_wst_combs
+                        )
+                    }
+                    names(focal_wst_w_other_names)[nonwst_loc] <- nonwst_names
+                    all_names <- c(nonwst_names, unlist(wst_names))
+                    focal_wst_w_other_names <- 
+                      focal_wst_w_other_names[,all_names]
+                  }
+                }
+              )
+            do.call("rbind", wst_expanded_combs)
+          }
+        )
+      # 'subset_matrix' entries where all '.wst' elements are FALSE,
+      # this expands the names of the columns associated with the '.wst' 
+      # elements so that they may be row bound with those from 
+      # 'fmt_in_out_namelist_wst'.
+      subset_noninc_wst <-
+        as.matrix(subset_matrix[apply(wst_matrix, 1, sum)==0, -args_list$.wst])
+      if (nrow(subset_noninc_wst) == 0) {
+        subset_wst_matrix <- do.call("rbind", fmt_in_out_namelist_wst)
+      } else {
+        subset_noninc_wst <-
+          data.frame(
+            subset_noninc_wst,
+            matrix(
+              rep(FALSE, times = length(unlist(wst_locs))),
+              ncol = length(unlist(wst_locs))
+            )
+          )
+        names(subset_noninc_wst) <- append(nonwst_names, unlist(wst_names))
+        subset_inc_wst <- do.call("rbind", fmt_in_out_namelist_wst)
+        subset_wst_matrix <- rbind(subset_noninc_wst, subset_inc_wst)
+      }
+      subset_wst_matrix <- 
+        subset_wst_matrix[!duplicated(subset_wst_matrix, fromLast = TRUE),] #somewhat inelegant but removes needless duplicated row(s) introduced by the 'in_out_namelist_wst' -  might consider removing 1st and last entries in that process and re-adding in all wst in and all wst out from 'subset_matrix' instead
+      print(subset_wst_matrix) # ~~
+      # 'selector_locations' is inaccurate and will not map to 
+      # 'subset_wst_matrix'. below 'selector_locations' is updated 
+      # so all within-set names will map to columns.
+      if (length(wst_locs) == length(args_list$RHS)) { # only wsts
+        RHS_wst <- unlist(args_list$RHS)
+      } else { # mixed wst and others
+        RHS_wst <- 
+          append(args_list$RHS[nonwst_loc], unlist(args_list$RHS[-nonwst_loc]))
+      }
+      print(RHS_wst) # ~~
+      subset_matrix <- subset_wst_matrix
+      args_list$RHS <- RHS_wst
+      name_count <- length(args_list$RHS)
+    }
     # adjust values with '.adj' ----
     adj_value <- args_list$.adj
     result_adjustment <- ifelse(is.null(adj_value), 0, adj_value)
@@ -69,7 +199,7 @@ dominance_scalar <-
                simplify = TRUE, USE.NAMES = FALSE)
     }
     # append value for subset of all names selected
-    value_vector <- append(value_vector, value_w_all_names)
+    value_vector <- append(value_vector, value_w_all_names); print(value_vector) # ~~
     # compute conditional dominance statistics ----
     if (do_cdl) {
       # allocate conditional dominance matrix for all names

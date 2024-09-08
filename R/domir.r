@@ -391,13 +391,13 @@ domir.formula <- function(
     selector_locations <- append(selector_locations, selector_locations_wsts)
   }
   # flag locations of .'wst's within selector_location list
-  which_wsts <- 
-    ifelse(
-      is.null(selector_locations_wsts), 
-      0, 
-      (length(selector_locations)-length(selector_locations_wsts)+1):
-        length(selector_locations)
-    )
+  if (is.null(selector_locations_wsts)) {
+    which_wsts <- NULL
+  } else {
+    which_wsts <-
+      ((length(selector_locations)-length(selector_locations_wsts))+1):
+      length(selector_locations)
+  }
   # check number of subsets
   if ((length(selector_locations) < 2) &&
       ifelse(is.null(selector_locations_wsts), 
