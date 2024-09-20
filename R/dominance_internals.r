@@ -43,6 +43,7 @@ dominance_scalar <-
             paste("wst_", wst, "_", 1:length(wst_locs[[wst]]), sep = "")
           }
         )
+      names(wst_names) <- paste("wst", 1:length(wst_names), sep = "_")
       # create all combinations of names within a '.wst' element as separate 
       # lists. remove empty/all FALSE and full/all TRUE combinations within 
       # each '.wst' element
@@ -140,7 +141,6 @@ dominance_scalar <-
       }
       subset_wst_matrix <- 
         subset_wst_matrix[!duplicated(subset_wst_matrix, fromLast = TRUE),] #somewhat inelegant but removes needless duplicated row(s) introduced by the 'in_out_namelist_wst' -  might consider removing 1st and last entries in that process and re-adding in all wst in and all wst out from 'subset_matrix' instead
-      print(subset_wst_matrix) # ~~
       # 'selector_locations' is inaccurate and will not map to 
       # 'subset_wst_matrix'. below 'selector_locations' is updated 
       # so all within-set names will map to columns.
@@ -150,8 +150,7 @@ dominance_scalar <-
         RHS_wst <- 
           append(args_list$RHS[nonwst_loc], unlist(args_list$RHS[-nonwst_loc]))
       }
-      print(RHS_wst) # ~~
-      subset_matrix <- subset_wst_matrix
+      subset_matrix <- subset_wst_matrix; print(subset_matrix) # ~~
       args_list$RHS <- RHS_wst
       name_count <- length(args_list$RHS)
     }
@@ -210,52 +209,137 @@ dominance_scalar <-
       name_count_by_subset <- rowSums(subset_matrix)
       # tally up possible combinations of included names
       # for each subset in 'subset_matrix'
-      combo_count_by_subset <- choose(name_count, name_count_by_subset)
-      # tally up possible combinations of included names at one less name
-      # for each subset in 'subset_matrix'
-      combo_1ls_count_by_subset <- choose(name_count - 1, name_count_by_subset)
-      # by subset, compute number of combinations that include each name
-      wgtd_result_matrix <-
-        combo_count_by_subset - combo_1ls_count_by_subset
-      # associate these combinations with each selected name;
-      # fills in for all TRUE entries
-      wgtd_result_matrix <- subset_matrix * wgtd_result_matrix
-      # turn this count into a weight; weight is inverse of count
-      wgtd_result_matrix <- wgtd_result_matrix**-1
-      # distribute values to all nonmissing values
-      wgtd_result_matrix <- wgtd_result_matrix * value_vector
-      # 'Inf' values created above are replaced as 0
-      wgtd_result_matrix <-
-        replace(wgtd_result_matrix,
-                abs(wgtd_result_matrix) == Inf, 0)
-      # repeat above process with combinations at one less name
-      wgtd_1ls_result_matrix <-
-        subset_matrix_complement * combo_1ls_count_by_subset
-      wgtd_1ls_result_matrix <- wgtd_1ls_result_matrix**-1
-      wgtd_1ls_result_matrix <- wgtd_1ls_result_matrix * value_vector
-      wgtd_1ls_result_matrix <-
-        replace(wgtd_1ls_result_matrix,
-                abs(wgtd_1ls_result_matrix) == Inf, 0)
-      # for each 'order'/number of names contributing to value
-      for (contrib_count in 1:name_count) {
-        # subset values to include just those with focal number of names
-        values_subset <-
-          wgtd_result_matrix[name_count_by_subset == contrib_count, ]
-        # subset values with one less names
-        values_subset_1ls <-
-          wgtd_1ls_result_matrix[name_count_by_subset == contrib_count - 1, ]
-        # conditional dominance is difference between weighted sums of
-        # values at focal number of names and one less;
-        # this effectively creates the average of the increments
-        # associated with each name at the focal number of names contributing to
-        # the value
-        conditional_dominance[, contrib_count] <-
-          t(colSums(values_subset) - colSums(values_subset_1ls))
+      if (is.null(args_list$.wst)) {
+        combo_count_by_subset <- choose(name_count, name_count_by_subset)
+        # tally up possible combinations of included names at one less name
+        # for each subset in 'subset_matrix'
+        combo_1ls_count_by_subset <- choose(name_count - 1, name_count_by_subset)
+        # by subset, compute number of combinations that include each name
+        wgtd_result_matrix <-
+          combo_count_by_subset - combo_1ls_count_by_subset
+        # associate these combinations with each selected name;
+        # fills in for all TRUE entries
+        wgtd_result_matrix <- subset_matrix * wgtd_result_matrix
+        # turn this count into a weight; weight is inverse of count
+        wgtd_result_matrix <- wgtd_result_matrix**-1
+        # distribute values to all nonmissing values
+        wgtd_result_matrix <- wgtd_result_matrix * value_vector
+        # 'Inf' values created above are replaced as 0
+        wgtd_result_matrix <-
+          replace(wgtd_result_matrix,
+                  abs(wgtd_result_matrix) == Inf, 0)
+        # repeat above process with combinations at one less name
+        wgtd_1ls_result_matrix <-
+          subset_matrix_complement * combo_1ls_count_by_subset
+        wgtd_1ls_result_matrix <- wgtd_1ls_result_matrix**-1
+        wgtd_1ls_result_matrix <- wgtd_1ls_result_matrix * value_vector
+        wgtd_1ls_result_matrix <-
+          replace(wgtd_1ls_result_matrix,
+                  abs(wgtd_1ls_result_matrix) == Inf, 0)
+        # for each 'order'/number of names contributing to value
+        for (contrib_count in 1:name_count) {
+          # subset values to include just those with focal number of names
+          values_subset <-
+            wgtd_result_matrix[name_count_by_subset == contrib_count, ]
+          # subset values with one less names
+          values_subset_1ls <-
+            wgtd_1ls_result_matrix[name_count_by_subset == contrib_count - 1, ]
+          # conditional dominance is difference between weighted sums of
+          # values at focal number of names and one less;
+          # this effectively creates the average of the increments
+          # associated with each name at the focal number of names contributing to
+          # the value
+          conditional_dominance[, contrib_count] <-
+            t(colSums(values_subset) - colSums(values_subset_1ls))
+        }
+      } else {
+        for (contrib_count in 1:name_count) {
+          relevant_subsets <- subset_matrix
+          relevant_values <- value_vector
+          name_count_by_subset <- rowSums(relevant_subsets)
+          cdl_wst_filter <- rep(TRUE, times = nrow(subset_matrix))
+          is_wst <- !grepl("^Var[0-9]+", names(subset_matrix)[contrib_count])
+          if (is_wst) {
+            if (length(wst_names) > 1) {
+              which_wst <- 
+                which(
+                  sapply(
+                    wst_names, 
+                    function(names) 
+                      any(grepl(names(subset_matrix[contrib_count]), names)))
+                )
+              for (wst in wst_names[-which_wst]) {
+                cdl_wst_filter <-
+                  apply(
+                    subset_matrix[,wst], 1, 
+                    function(row) (all(row) | !any(row))
+                  ) & cdl_wst_filter
+              }
+            }
+          } else {
+            for (wst in wst_names) {
+              cdl_wst_filter <-
+                apply(
+                  subset_matrix[,wst], 1, 
+                  function(row) (all(row) | !any(row))
+                ) & cdl_wst_filter
+            }
+          }
+          relevant_subsets <- relevant_subsets[cdl_wst_filter,]
+          relevant_values <- relevant_values[cdl_wst_filter]
+          relevant_name_count <- rowSums(relevant_subsets)
+          relevant_perms <- 
+            perm_computer(relevant_subsets, wst_names, names(subset_matrix)[contrib_count])
+          for (inc_order in 1:name_count) {
+            var_at_order <- # lgl to select
+              relevant_name_count == inc_order & 
+              relevant_subsets[, contrib_count]
+            inc_at_n_subsets <- relevant_subsets[var_at_order, ] # models selected
+            if (nrow(inc_at_n_subsets) == 0) {
+              conditional_dominance[contrib_count, inc_order] <- NA
+            } else {
+              inc_at_n_values <- relevant_values[var_at_order]
+              inc_at_n_ls_subsets <- inc_at_n_subsets
+              inc_at_n_ls_subsets[, contrib_count] <- FALSE
+              select_n_ls_values <- 
+                apply(
+                  inc_at_n_ls_subsets,
+                  1, 
+                  function(req_row) {
+                    which(
+                      apply(
+                        relevant_subsets, 
+                        1, 
+                        function(try_row) {
+                          all(req_row == try_row)
+                        }
+                      )
+                    )
+                  }
+                )
+              if (inc_order > 1) {
+                inc_at_n_ls_values <- relevant_values[select_n_ls_values]*-1
+              } else {
+                inc_at_n_ls_values <- result_adjustment*-1
+              }
+              inc_at_n_wgts <- exp(relevant_perms[var_at_order])
+              if (inc_order > 1) {
+                inc_at_n_ls_wgts <- exp(relevant_perms[select_n_ls_values])
+              } else {
+                inc_at_n_ls_wgts <- inc_at_n_wgts
+              }
+              conditional_dominance[contrib_count, inc_order] <- 
+                sum(inc_at_n_wgts*inc_at_n_values) + 
+                sum(inc_at_n_ls_wgts*inc_at_n_ls_values)
+            }
+          }
+        }
       }
       # adjust values at one name in model results for '.adj' and '.all'
-      conditional_dominance[, 1] <-
+      if (is.null(args_list$.wst))
+        conditional_dominance[, 1] <- 
         conditional_dominance[, 1] - result_adjustment
-      # if '.cdl' was FALSE
+    # if '.cdl' was FALSE
     } else {
       conditional_dominance <- NULL
     }
@@ -330,6 +414,7 @@ dominance_scalar <-
     # if '.cdl' is false, implement general dominance statistic
     # computational method
     if (!do_cdl) {
+      # !! needs updating with within-sets !! ----
       # implement some otherwise conditional dominance processes
       subset_matrix_complement <- !subset_matrix
       name_count_by_subset <- rowSums(subset_matrix)
@@ -361,7 +446,11 @@ dominance_scalar <-
       general_dominance <- colSums(value_vector * wgt_mat)
       # if '.cdl' is TRUE; general dominance is average of cdl dominance
     } else {
-      general_dominance <- rowMeans(conditional_dominance)
+      if (!is.null(args_list$.wst)) {
+        general_dominance <- rowSums(conditional_dominance, na.rm = TRUE)
+      } else {
+        general_dominance <- rowMeans(conditional_dominance)
+      }
     }
     # obtain overall fit statistic and ranks ----
     # replace result adjustment for overall value
@@ -383,3 +472,85 @@ dominance_scalar <-
       Value = value
     )
   }
+# function to compute permutations for inclusion precedence ----
+perm_computer <- function(subset_matrix, wst_names, current_name) {
+  perm_vec <- vector(mode = "numeric", length = nrow(subset_matrix))
+  col <- which(names(subset_matrix) == current_name)
+  non_wst <- 
+    as.matrix(subset_matrix[, which(grepl("^Var[0-9]+", names(subset_matrix)))])
+  if (length(non_wst) > 0) {
+    colnames(non_wst) <-
+      grep("^Var[0-9]+", names(subset_matrix), value = TRUE)
+    nonwst_names <- 
+      as.list(grep("^Var[0-9]+", names(subset_matrix), value = TRUE))
+    names(nonwst_names) <- 
+      grep("^Var[0-9]+", names(subset_matrix), value = TRUE)
+    all_wst_names <- append(nonwst_names, wst_names)
+  } else {
+    all_wst_names <- wst_names
+  }
+  wst <-
+    lapply(
+      wst_names,
+      function(wst) {
+        apply(subset_matrix[, wst], 1, \(row) any(row))
+      }
+    )
+  if (length(wst) > 0) {
+    wst <- as.matrix(as.data.frame(wst))
+    colnames(wst) <- paste("wst", 1:ncol(wst), sep = "_")
+  }
+  groups <- cbind(non_wst, wst)
+  current_group <- 
+    ifelse(
+      grepl("^wst", current_name), 
+      gsub("_[0-9]+$", "",  current_name), 
+      current_name
+    )
+  current_group_i <- which(colnames(groups) == current_group)
+  for (row in 1:nrow(subset_matrix)) {
+    if (subset_matrix[row, col]) {
+      groups_before <- sum(groups[row, -current_group_i])
+      groups_after <- sum(!groups[row, -current_group_i])
+      wgrps_before <- 
+        sapply(
+          all_wst_names[groups[row, ]], function(elem) length(elem))
+      wgrps_before <- 
+        wgrps_before[-which(names(wgrps_before) == current_group)]
+      wgrps_after <- 
+        sapply(all_wst_names[!groups[row, ]], function(elem) length(elem))
+      wgrp_names <- 
+        all_wst_names[[which(names(all_wst_names) == current_group)]]
+      wgrp_index <- subset_matrix[row, wgrp_names]
+      names_before <- sum(wgrp_index) - 1
+      names_after <- sum(!wgrp_index)
+      perm_vec[[row]] <- 
+        lfactorial(groups_before) + lfactorial(groups_after) + 
+        ifelse(
+          length(wgrps_before) == 0, 
+          0, 
+          sum(sapply(wgrps_before, function(size) lfactorial(size)))
+        ) +
+        ifelse(
+          length(wgrps_after) == 0, 
+          0, 
+          sum(sapply(wgrps_after, function(size) lfactorial(size)))
+        ) +
+        lfactorial(names_before) + lfactorial(names_after)
+    }
+  }
+  for (row in 1:nrow(subset_matrix)) {
+    if (!subset_matrix[row, col]) {
+      patt2match <- subset_matrix[row, ]
+      patt2match[, col] <- TRUE
+      loc_of_match <- 
+        which(apply(subset_matrix, 1, function(patt) all(patt == patt2match)))
+      perm_vec[[row]] <- perm_vec[[loc_of_match]]
+    }
+  }
+  perm_vec <- 
+    perm_vec - 
+    (lfactorial(length(all_wst_names)) + 
+       sum(sapply(all_wst_names, function(elem) lfactorial(length(elem)))))
+  perm_vec
+}
