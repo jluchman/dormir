@@ -253,6 +253,10 @@ dominance_scalar <-
             t(colSums(values_subset) - colSums(values_subset_1ls))
         }
       } else {
+        wst_counts <- 
+          sum(grepl("^Var", colnames(subset_matrix))) + length(wst_names)
+        conditional_dominance <- 
+          matrix(nrow = name_count, ncol = wst_counts)
         for (contrib_count in 1:name_count) {
           relevant_subsets <- subset_matrix
           relevant_values <- value_vector
@@ -285,23 +289,33 @@ dominance_scalar <-
                 ) & cdl_wst_filter
             }
           }
-          relevant_subsets <- relevant_subsets[cdl_wst_filter,]
+          relevant_subsets <- relevant_subsets[cdl_wst_filter,]; print(relevant_subsets) # ~~
           relevant_values <- relevant_values[cdl_wst_filter]
-          relevant_name_count <- rowSums(relevant_subsets)
-          relevant_perms <- 
-            perm_computer(relevant_subsets, wst_names, names(subset_matrix)[contrib_count])
-          for (inc_order in 1:name_count) {
+          #relevant_name_count <- rowSums(relevant_subsets)
+          non_wst_locs <- which(grepl("^Var", colnames(relevant_subsets)))
+          if (length(non_wst_locs) > 0) {
+            relevant_name_count <- 
+              rowSums(as.matrix(relevant_subsets[, non_wst_locs]))
+          } else {
+            relevant_name_count <- relevant_values*0
+          }
+          for (wst in names(wst_names)) {
+            wst_loc <- which(grepl(wst, colnames(relevant_subsets)))
+            relevant_name_count <- 
+              relevant_name_count + apply(relevant_subsets[, wst_loc], 1, any)
+          }
+          relevant_perms <-
+            perm_computer(relevant_subsets, wst_names, names(subset_matrix)[contrib_count]); print(relevant_perms) # ~~
+          for (inc_order in 1:wst_counts) {
             var_at_order <- # lgl to select
               relevant_name_count == inc_order & 
               relevant_subsets[, contrib_count]
             inc_at_n_subsets <- relevant_subsets[var_at_order, ] # models selected
-            if (nrow(inc_at_n_subsets) == 0) {
-              conditional_dominance[contrib_count, inc_order] <- NA
-            } else {
-              inc_at_n_values <- relevant_values[var_at_order]
-              inc_at_n_ls_subsets <- inc_at_n_subsets
-              inc_at_n_ls_subsets[, contrib_count] <- FALSE
-              select_n_ls_values <- 
+            inc_at_n_values <- relevant_values[var_at_order]
+            inc_at_n_ls_subsets <- inc_at_n_subsets
+            inc_at_n_ls_subsets[, contrib_count] <- FALSE
+            select_n_ls_values <- 
+              unlist(
                 apply(
                   inc_at_n_ls_subsets,
                   1, 
@@ -317,27 +331,37 @@ dominance_scalar <-
                     )
                   }
                 )
-              if (inc_order > 1) {
-                inc_at_n_ls_values <- relevant_values[select_n_ls_values]*-1
-              } else {
-                inc_at_n_ls_values <- result_adjustment*-1
-              }
-              inc_at_n_wgts <- exp(relevant_perms[var_at_order])
-              if (inc_order > 1) {
-                inc_at_n_ls_wgts <- exp(relevant_perms[select_n_ls_values])
-              } else {
-                inc_at_n_ls_wgts <- inc_at_n_wgts
-              }
-              conditional_dominance[contrib_count, inc_order] <- 
-                sum(inc_at_n_wgts*inc_at_n_values) + 
-                sum(inc_at_n_ls_wgts*inc_at_n_ls_values)
-            }
+              )
+            # if (inc_order > 1) {
+            #   inc_at_n_ls_values <- relevant_values[select_n_ls_values]*-1
+            # } else {
+            #   inc_at_n_ls_values <- result_adjustment*-1
+            # }
+            inc_at_n_ls_values <- relevant_values[select_n_ls_values]
+            # #inc_at_n_wgts <- exp(relevant_perms[var_at_order])
+            inc_at_n_wgts <- relevant_perms[var_at_order]
+            # if (inc_order > 1) {
+            #   inc_at_n_ls_wgts <- exp(relevant_perms[select_n_ls_values])
+            # } else {
+            #   inc_at_n_ls_wgts <- inc_at_n_wgts
+            # }
+            inc_at_n_ls_wgts <- relevant_perms[select_n_ls_values]
+            # conditional_dominance[contrib_count, inc_order] <- 
+            #   sum(inc_at_n_wgts*inc_at_n_values) + 
+            #   sum(inc_at_n_ls_wgts*inc_at_n_ls_values)
+            # conditional_dominance[contrib_count, inc_order] <-
+            #   (sum(inc_at_n_values) - sum(inc_at_n_ls_values)
+            #   )/length(inc_at_n_values)
+            conditional_dominance[contrib_count, inc_order] <-
+              exp(log(sum(exp((inc_at_n_wgts + log(inc_at_n_values)))) -
+                  sum(exp(inc_at_n_ls_wgts + log(inc_at_n_ls_values)))) - 
+              log(sum(exp(inc_at_n_wgts))))
           }
         }
       }
       # adjust values at one name in model results for '.adj' and '.all'
-      if (is.null(args_list$.wst))
-        conditional_dominance[, 1] <- 
+      #if (is.null(args_list$.wst))
+      conditional_dominance[, 1] <- 
         conditional_dominance[, 1] - result_adjustment
     # if '.cdl' was FALSE
     } else {
@@ -446,11 +470,7 @@ dominance_scalar <-
       general_dominance <- colSums(value_vector * wgt_mat)
       # if '.cdl' is TRUE; general dominance is average of cdl dominance
     } else {
-      if (!is.null(args_list$.wst)) {
-        general_dominance <- rowSums(conditional_dominance, na.rm = TRUE)
-      } else {
-        general_dominance <- rowMeans(conditional_dominance)
-      }
+      general_dominance <- rowMeans(conditional_dominance)
     }
     # obtain overall fit statistic and ranks ----
     # replace result adjustment for overall value
@@ -476,14 +496,14 @@ dominance_scalar <-
 perm_computer <- function(subset_matrix, wst_names, current_name) {
   perm_vec <- vector(mode = "numeric", length = nrow(subset_matrix))
   col <- which(names(subset_matrix) == current_name)
-  non_wst <- 
+  non_wst <-
     as.matrix(subset_matrix[, which(grepl("^Var[0-9]+", names(subset_matrix)))])
   if (length(non_wst) > 0) {
     colnames(non_wst) <-
       grep("^Var[0-9]+", names(subset_matrix), value = TRUE)
-    nonwst_names <- 
+    nonwst_names <-
       as.list(grep("^Var[0-9]+", names(subset_matrix), value = TRUE))
-    names(nonwst_names) <- 
+    names(nonwst_names) <-
       grep("^Var[0-9]+", names(subset_matrix), value = TRUE)
     all_wst_names <- append(nonwst_names, wst_names)
   } else {
@@ -501,10 +521,10 @@ perm_computer <- function(subset_matrix, wst_names, current_name) {
     colnames(wst) <- paste("wst", 1:ncol(wst), sep = "_")
   }
   groups <- cbind(non_wst, wst)
-  current_group <- 
+  current_group <-
     ifelse(
-      grepl("^wst", current_name), 
-      gsub("_[0-9]+$", "",  current_name), 
+      grepl("^wst", current_name),
+      gsub("_[0-9]+$", "",  current_name),
       current_name
     )
   current_group_i <- which(colnames(groups) == current_group)
@@ -512,28 +532,28 @@ perm_computer <- function(subset_matrix, wst_names, current_name) {
     if (subset_matrix[row, col]) {
       groups_before <- sum(groups[row, -current_group_i])
       groups_after <- sum(!groups[row, -current_group_i])
-      wgrps_before <- 
+      wgrps_before <-
         sapply(
           all_wst_names[groups[row, ]], function(elem) length(elem))
-      wgrps_before <- 
+      wgrps_before <-
         wgrps_before[-which(names(wgrps_before) == current_group)]
-      wgrps_after <- 
+      wgrps_after <-
         sapply(all_wst_names[!groups[row, ]], function(elem) length(elem))
-      wgrp_names <- 
+      wgrp_names <-
         all_wst_names[[which(names(all_wst_names) == current_group)]]
       wgrp_index <- subset_matrix[row, wgrp_names]
       names_before <- sum(wgrp_index) - 1
       names_after <- sum(!wgrp_index)
-      perm_vec[[row]] <- 
-        lfactorial(groups_before) + lfactorial(groups_after) + 
+      perm_vec[[row]] <-
+        lfactorial(groups_before) + lfactorial(groups_after) +
         ifelse(
-          length(wgrps_before) == 0, 
-          0, 
+          length(wgrps_before) == 0,
+          0,
           sum(sapply(wgrps_before, function(size) lfactorial(size)))
         ) +
         ifelse(
-          length(wgrps_after) == 0, 
-          0, 
+          length(wgrps_after) == 0,
+          0,
           sum(sapply(wgrps_after, function(size) lfactorial(size)))
         ) +
         lfactorial(names_before) + lfactorial(names_after)
@@ -543,14 +563,14 @@ perm_computer <- function(subset_matrix, wst_names, current_name) {
     if (!subset_matrix[row, col]) {
       patt2match <- subset_matrix[row, ]
       patt2match[, col] <- TRUE
-      loc_of_match <- 
+      loc_of_match <-
         which(apply(subset_matrix, 1, function(patt) all(patt == patt2match)))
       perm_vec[[row]] <- perm_vec[[loc_of_match]]
     }
   }
-  perm_vec <- 
-    perm_vec - 
-    (lfactorial(length(all_wst_names)) + 
-       sum(sapply(all_wst_names, function(elem) lfactorial(length(elem)))))
+  # perm_vec <-
+  #   perm_vec -
+  #   (lfactorial(length(all_wst_names)) +
+  #      sum(sapply(all_wst_names, function(elem) lfactorial(length(elem)))))
   perm_vec
 }

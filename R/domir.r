@@ -449,7 +449,7 @@ domir.formula <- function(
     dimnames(return_list$Conditional_Dominance) <-
       list(names(return_list$General_Dominance),
            paste0("include_at_",
-                  seq_len(length(return_list$General_Dominance))))
+                  seq_len(ncol(return_list$Conditional_Dominance))))
   }
   if (.cpt) {
     dimnames(return_list$Complete_Dominance) <-
